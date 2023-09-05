@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional, TypedDict, NamedTuple, List, Dict
+from typing import Optional, TypedDict, NamedTuple, List, Dict, Union
 import torch
 from torch import LongTensor
 from transformers import (
@@ -15,7 +15,6 @@ from transformers import (
   LlamaForCausalLM,
   LlamaTokenizerFast
 )
-from peft import PeftModel, PeftModelForCausalLM
 from src.callback_text_iterator_streamer import CallbackTextIteratorStreamer
 import logging
 from enum import Enum
@@ -50,10 +49,7 @@ class SufficientResponse(BaseException): ...
 @dataclass
 class ModelArguments:
   model_name_or_path: Optional[str] = field(
-    default="huggyllama/llama-7b"
-  )
-  lora_name_or_path: Optional[str] = field(
-    default="tloen/alpaca-lora-7b"
+    default="WizardLM/WizardCoder-Python-7B-V1.0"
   )
   trust_remote_code: Optional[bool] = field(
     default=False,
@@ -73,7 +69,11 @@ class ModelArguments:
   )
   bf16: Optional[bool] = field(
     default=False,
-    metadata={"help": "Compute type of the model. If quantizing: this is also the compute type used for quantized computations. Prefer to turn this on if you are quantizing and your GPU supports it. You probably also want it even if you're not quantizing."}
+    metadata={"help": "Compute type of the model. If quantizing: this is also the compute type used for quantized computations. But since this is inference rather than training: the extra mantissa precision of float16 may be more useful than the exponent range of bfloat16."}
+  )
+  flash: Optional[bool] = field(
+    default=False,
+    metadata={"help": "Whether to replace the model code with togethercomputer's modeling_flash_llama.py, which uses Flash Attention 2 (via flash-attn) to accelerate model inference and reduce memory usage."}
   )
 
 @dataclass
@@ -93,6 +93,10 @@ class MiscArguments:
   overrun_countermeasures: bool = field(
     default=True,
     metadata={"help": "Detect when bot is about to start talking to itself; end the generation before that happens. The bot is *supposed* to emit an end-of-sentence token to indicate that it's finished its reply, but neglects to do so in longer conversations, continuing to sequence-complete both sides of the conversation. Hence this countermeasure tries to detect and prevent that."}
+  )
+  chat_memory: bool = field(
+    default=False,
+    metadata={"help": "Whether chat sequence should accumulate a conversation context, or reset each time"}
   )
 
 @dataclass
@@ -132,6 +136,24 @@ def get_model(args: ModelArguments) -> LlamaForCausalLM:
     args.model_name_or_path,
     trust_remote_code=args.trust_remote_code,
   )
+
+  if args.use_flash_llama and config.model_type == 'llama':
+    updates: Dict[str, Union[str, int, float, bool, None]] = {}
+    flash_model_name = 'Birchlabs/flash_llama--modeling_flash_llama.LlamaForCausalLM'
+    if 'num_key_value_heads' not in config.__dict__:
+      updates['num_key_value_heads'] = config.num_attention_heads
+    if 'auto_map' in config.__dict__:
+      if not ('AutoModelForCausalLM' in config.auto_map and 'flash' in config.auto_map['AutoModelForCausalLM']):
+        updates['auto_map']['AutoModelForCausalLM'] = flash_model_name
+    else:
+      updates['auto_map'] = { 'AutoModelForCausalLM': flash_model_name }
+    if 'rope_scaling' not in config.__dict__:
+      updates['rope_scaling'] = { 'factor': (args.source_max_len + args.target_max_len)/config.max_position_embeddings, 'type': 'linear' }
+    if 'pretraining_tp' not in config.__dict__:
+      updates['pretraining_tp'] = 1
+    if updates:
+      config.update(updates)
+
   cuda_avail = torch.cuda.is_available()
   compute_dtype = torch.bfloat16 if args.bf16 else torch.float16
   load_in_4bit = args.bits == 4 and cuda_avail
@@ -148,10 +170,7 @@ def get_model(args: ModelArguments) -> LlamaForCausalLM:
   ) if cuda_avail else None
 
   if not cuda_avail:
-    logger.warning("You don't have CUDA, so we have turned off quantization. If you happen to be on a Mac: you probably have enough unified memory to run in fp16 anyway…")
-
-  if compute_dtype == torch.float16 and cuda_avail and torch.cuda.is_bf16_supported():
-    print("Your GPU supports bfloat16; you may want to try it with --bf16 (note: I'm not sure how important this is for inference, but it's certainly preferred when training with 4-bit quantization.)")
+    logger.warning("You don't have CUDA, so we have turned off quantization. If you happen to be on a Mac: maybe you have enough unified memory to run in fp16 anyway…")
   
   model: LlamaForCausalLM = AutoModelForCausalLM.from_pretrained(
     args.model_name_or_path,
@@ -176,19 +195,12 @@ def main():
 
   model: LlamaForCausalLM = get_model(model_args)
 
-  model: PeftModelForCausalLM = PeftModel.from_pretrained(
-    model,
-    model_args.lora_name_or_path,
-    # torch_dtype=torch.bfloat16 if model_args.bf16 else torch.float16,
-  ).eval()
-
   set_seed(misc_args.seed)
   if misc_args.compile:
     torch.compile(model, mode='max-autotune')
 
   tokenizer: LlamaTokenizerFast = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
 
-  # stop_token_ids: List[int] = tokenizer.convert_tokens_to_ids(["<|im_end|>", "<|endoftext|>"])
   stop_token_ids: List[int] = [tokenizer.eos_token_id]
   stop = StopOnTokens(stop_token_ids)
   stopping_criteria=StoppingCriteriaList([stop])
@@ -221,11 +233,12 @@ def main():
     print(reset_ansi, end='')
 
     first = False
-    history += [Message(Participant.User, user_input)]
+    user_message: Message = Message(Participant.User, user_input)
   
     chat_to_complete: str = '\n\n'.join([
       format_message(message) for message in [
         *history,
+        user_message,
         Message(Participant.Assistant, ''),
       ]
     ])
@@ -289,9 +302,13 @@ def main():
     # reset ANSI control sequence (plus line break)
     print(reset_ansi)
 
-    # TODO: cull older history, otherwise context will just keep growing larger.
-    #       ideally by measuring each message to work out the smallest cull possible.
-    history += [Message(Participant.Assistant, response)]
+    # we disable accumulation of conversation history by default, because WizardCoder is not advertised as being finetuned on multi-turn conversations,
+    # but more importantly because I'd rather spend our 4k context length on a detailed answer for a single-turn than an incomplete answer for multiple turns.
+    if misc_args.chat_memory:
+      history += [
+        user_message,
+        Message(Participant.Assistant, response)
+      ]
 
 if __name__ == "__main__":
   main()
