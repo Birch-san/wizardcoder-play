@@ -1,13 +1,12 @@
-[WIP] For starters I am treating this as a fork of [`Birch-san/llama-play`](https://github.com/Birch-san/llama-play).
+# WizardCoder-Play
 
-# LLaMA-Play
+Python script to demonstrate how to invoke models such as WizardCoder from the command-line.
 
-<img width="420" alt="Type a message to begin the conversation…/$ hey I'm mahouko/Hello, Mahouko, it's good to meet you./$ what's my name again?/What do you mean, Mahouko?/$ oh phew it worked/That's great! What do you need help with?/$ what's my name?/Hey Mahouko, what can I help you with?/$ you've already done enough/That's okay. You can always ask me for help if you need it." src="https://github.com/Birch-san/llama-play/assets/6141784/ac07e9f9-e344-4075-9972-a8613a20e58b">
+Intends to support the following models:
 
-Python script to demonstrate how to invoke models such as LLaMA from the command-line, with LoRA adapters.
-
-_Uses the [`huggyllama/llama-7b`](https://huggingface.co/huggyllama/llama-7b) LLaMA distribution by default, but if you have the official LLaMA weights and would prefer to convert them to Huggingface format yourself: I provide [instructions for doing so](https://gist.github.com/Birch-san/0b2d2f9bd997801005c1b5acbbc1dc0f)._  
-_Uses the [`alpaca-lora-7b`](https://huggingface.co/tloen/alpaca-lora-7b) LoRA by default, to adapt LLaMA for instruction-following._
+- [`WizardLM/WizardCoder-Python-7B-V1.0`](https://huggingface.co/WizardLM/WizardCoder-Python-7B-V1.0)
+- [`WizardLM/WizardCoder-Python-13B-V1.0`](https://huggingface.co/WizardLM/WizardCoder-Python-13B-V1.0)
+- [`WizardLM/WizardCoder-Python-34B-V1.0`](https://huggingface.co/WizardLM/WizardCoder-Python-34B-V1.0)
 
 ## Setup
 
@@ -16,8 +15,8 @@ All instructions are written assuming your command-line shell is bash.
 Clone repository:
 
 ```bash
-git clone https://github.com/Birch-san/llama-play.git
-cd llama-play
+git clone https://github.com/Birch-san/wizardcoder-play.git
+cd wizardcoder-play
 ```
 
 ### Create + activate a new virtual environment
@@ -31,7 +30,7 @@ Follow the instructions for virtualenv, or conda, or neither (if you don't care 
 **Create environment**:
 
 ```bash
-. ./venv/bin/activate
+python -m venv venv
 pip install --upgrade pip
 ```
 
@@ -84,25 +83,57 @@ conda activate p311-llama
 
 **Ensure you have activated the environment you created above.**
 
-(Optional) treat yourself to latest nightly of PyTorch, with support for Python 3.11 and CUDA 12.1:
-
-```bash
-# CUDA
-pip install --upgrade --pre torch --extra-index-url https://download.pytorch.org/whl/nightly/cu121
-```
-
 Install dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
+#### (Optional) install PyTorch nightly
+
+The PyTorch nightlies may be more performant. Until [PyTorch 2.1.0 stable comes out (~October 4th)](https://github.com/pytorch/pytorch/issues/86566#issuecomment-1706075651), nightlies are the best way to get CUDA 12.1 support:
+
+```bash
+# CUDA
+pip install --upgrade --pre torch --extra-index-url https://download.pytorch.org/whl/nightly/cu121
+```
+
+#### (Optional) install flash attention 2
+
+To accelerate inference and reduce memory usage, install `flash-attn`.
+
+First we install the package itself:
+
+```bash
+pip install flash-attn --no-build-isolation
+```
+
+Then we build-from-source its rotary embeddings kernel (there is no officially-distributed wheel):
+
+```bash
+MAX_JOBS=2 pip install git+https://github.com/HazyResearch/flash-attention.git#subdirectory=csrc/rotary
+```
+
+**[Building `rotary` from source] `error: expected template-name before ‘<’ token`:**  
+If you compiled flash-attn source using nvcc 12.x (i.e. CUDA Toolkit 12), you will [encounter the following error](https://github.com/pybind/pybind11/issues/4606) whilst compiling pybind11's `cast.h` header:
+
+```
+/home/birch/anaconda3/envs/p311-cu121-bnb-opt/lib/python3.11/site-packages/torch/include/pybind11/detail/../cast.h: In function ‘typename pybind11::detail::type_caster<typename pybind11::detail::intrinsic_type<T>::type>::cast_op_type<T> pybind11::detail::cast_op(make_caster<T>&)’:
+/home/birch/anaconda3/envs/p311-cu121-bnb-opt/lib/python3.11/site-packages/torch/include/pybind11/detail/../cast.h:45:120: error: expected template-name before ‘<’ token
+   45 |     return caster.operator typename make_caster<T>::template cast_op_type<T>();
+```
+
+Solution [here](https://github.com/Dao-AILab/flash-attention/issues/484#issuecomment-1706843478).
+
+**[Running `wizard_play.py`] `ImportError`:**  
+Recent flash-attn releases encounter [errors _importing_ rotary embed](https://github.com/Dao-AILab/flash-attention/issues/519). You may need to copy Dao-AILab's [`ops/triton`](https://github.com/Dao-AILab/flash-attention/tree/main/flash_attn/ops/triton) directory into the flash-attn distribution you installed to site-packages.
+
 ## Run:
 
 From root of repository:
 
 ```bash
-python -m scripts.chat_play --bf16
+python -m scripts.wizard_play
 ```
 
 ## License
