@@ -125,9 +125,6 @@ If you compiled flash-attn source using nvcc 12.x (i.e. CUDA Toolkit 12), you wi
 
 Solution [here](https://github.com/Dao-AILab/flash-attention/issues/484#issuecomment-1706843478).
 
-**[Running `wizard_play.py`] `ImportError`:**  
-Recent flash-attn releases encounter [errors _importing_ rotary embed](https://github.com/Dao-AILab/flash-attention/issues/519). You may need to copy Dao-AILab's [`ops/triton`](https://github.com/Dao-AILab/flash-attention/tree/main/flash_attn/ops/triton) directory into the flash-attn distribution you installed to site-packages.
-
 ## Run:
 
 From root of repository:
@@ -135,6 +132,27 @@ From root of repository:
 ```bash
 python -m scripts.wizard_play
 ```
+
+Fun command-line options:
+
+- `--flash --trust_remote_code`: enables flash attention 2 via `flash-attn` library and ([my fork of](https://huggingface.co/Birchlabs/flash_llama)) [togethercomputer's `modeling_flash_llama.py`](https://huggingface.co/togethercomputer/LLaMA-2-7B-32K/blob/main/modeling_flash_llama.py)
+
+### Troubleshooting
+
+**`cannot import name 'translate_llvmir_to_hsaco'`:**  
+You [need a triton nightly](https://github.com/openai/triton/issues/2002).
+```
+Failed to import transformers.models.llama.modeling_llama because of the following error (look up to see its traceback):
+Failed to import transformers.generation.utils because of the following error (look up to see its traceback):
+cannot import name 'translate_llvmir_to_hsaco' from 'triton._C.libtriton.triton' (unknown location)
+```
+
+```bash
+pip install -U --index-url https://aiinfra.pkgs.visualstudio.com/PublicPackages/_packaging/Triton-Nightly/pypi/simple/ triton-nightly
+```
+
+**`ImportError`:**  
+Recent flash-attn releases encounter [errors _importing_ rotary embed](https://github.com/Dao-AILab/flash-attention/issues/519). You may need to copy Dao-AILab's [`ops/triton`](https://github.com/Dao-AILab/flash-attention/tree/main/flash_attn/ops/triton) directory into the flash-attn distribution you installed to site-packages.
 
 ## License
 
