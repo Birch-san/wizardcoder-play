@@ -40,6 +40,21 @@
         "--prompt_style", "codellama-instruct",
         "--chat_memory",
       ]
-    }
+    },
+    {
+      "name": "Python: CodeLlama-7B few-shot",
+      "type": "python",
+      "request": "launch",
+      "module": "scripts.wizard_play",
+      "justMyCode": false,
+      "args": [
+        "--model_name_or_path", "codellama/CodeLlama-7b-Instruct-hf",
+        "--flash",
+        "--prompt_style", "codellama-instruct",
+        "--chat_memory",
+        "--shot0_input", "Read user's name from stdin",
+        "--shot0_response", "import sys\n\nname = input(\"Enter your name: \")\nprint(\"Your name is:\", name)",
+      ]
+    },
   ]
 }

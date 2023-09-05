@@ -148,6 +148,37 @@ Fun command-line options:
 - `--flash --trust_remote_code`: enables flash attention 2 via `flash-attn` library and ([my fork of](https://huggingface.co/Birchlabs/flash_llama)) [togethercomputer's `modeling_flash_llama.py`](https://huggingface.co/togethercomputer/LLaMA-2-7B-32K/blob/main/modeling_flash_llama.py)
 - `--max_new_tokens 2048`: modify maximum response length
 - `--chat_memory`: enable conversation history, for multi-turn conversations (CodeLlama-Instruct was trained on this, but WizardCoder was not)
+- `--initial_input 'Write a function which computes the Fibonacci sequence.'`: you can buffer a prompt to be submitted as soon as the model's loaded.
+
+You can press Ctrl+C whilst the model is generating a response, to interrupt it.  
+If the model is **not** generating a response, then Ctrl+C will exit the software.
+
+### Few-shotting
+
+You can seed the conversation history with a previous input and forced response from the model:
+
+```bash
+python -m scripts.wizard_play --model_name_or_path codellama/CodeLlama-7b-Instruct-hf --prompt_style codellama-instruct --shot0_input "Read user's name from stdin" --shot0_response 'import sys
+
+name = input("Enter your name: ")
+print("Your name is:", name)'
+```
+
+This achieves two things:
+
+- creates a memory in the conversation
+- sets an expectation for what kind of style of response you prefer.
+
+You can see this in action, by asking the model to iterate on the solution you placed into its history:
+
+```
+[seed=64]$ Print their age too.
+import sys
+
+name = input("Enter your name: ")
+age = input("Enter your age: ")
+print("Your name is:", name, ",", "and", "your age:", age)
+```
 
 ### Troubleshooting
 

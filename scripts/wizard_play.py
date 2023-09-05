@@ -126,7 +126,15 @@ class MiscArguments:
   )
   initial_input: Optional[str] = field(
     default=None,
-    metadata={"help": "Initial message sent to the model. For example: What is $\sqrt{53}$ in simplest radical form?"}
+    metadata={"help": "Initial message sent to the model. For example: Read user's name from stdin"}
+  )
+  shot0_input: Optional[str] = field(
+    default=None,
+    metadata={"help": "[to be used with --shot0_response] Use few-shotting to populate conversation history with an example of the kind of input+response you prefer. This arg exemplifies an input that the user sent previously to the model. For example: Read user's name from stdin"}
+  )
+  shot0_response: Optional[str] = field(
+    default=None,
+    metadata={"help": "[to be used with --shot0_input] Use few-shotting to populate conversation history with an example of the kind of input+response you prefer. This arg exemplifies a reply that the model produced in reponse to the user's previous input, --shot0_input. For example: import sys\n\nname = input(\"Enter your name: \")\nprint(\"Your name is:\", name)"}
   )
   # if you actually set the type hint to PromptStyle: you will find that HF/argparse assign a string anyway
   prompt_style: PromptStyleLiteral = field(
@@ -293,6 +301,13 @@ def main():
   # whereas WizardCoder seems to always use the same (Alpaca-style) system prompt (I wouldn't recommend erasing WizardCoder's system prompt)
   optional_system_message: List[Message] = [Message(Participant.System, system_prompt)] if system_prompt else []
   history: List[Message] = []
+
+  if misc_args.shot0_input is not None:
+    assert misc_args.shot0_response is not None, "few-shotting requires you to specify the entire previous turn of the conversation (both --shot0_input and --shot0_response)."
+    history += [
+      Message(Participant.User, misc_args.shot0_input),
+      Message(Participant.Assistant, misc_args.shot0_response),
+    ]
 
   reset_ansi='\x1b[0m'
   cyan_ansi='\x1b[31;36m'
