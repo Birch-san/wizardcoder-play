@@ -51,6 +51,10 @@ class ModelArguments:
   model_name_or_path: Optional[str] = field(
     default="WizardLM/WizardCoder-Python-7B-V1.0"
   )
+  cache_dir: Optional[str] = field(
+    default=None,
+    metadata={"help": "Which directory to use as your HuggingFace cache. Defaults to ~/.cache/huggingface, probably. Use this if you want to download models to a specific location."}
+  )
   trust_remote_code: Optional[bool] = field(
     default=False,
     metadata={"help": "Enable unpickling of arbitrary code in AutoModelForCausalLM#from_pretrained."}
@@ -85,10 +89,6 @@ class MiscArguments:
   compile: bool = field(
     default=False,
     metadata={"help": "Invoke torch.compile() on the model, with mode='max-autotune'. Requires PyTorch 2, CUDA, and either Python 3.10 or Python 3.11 with a recent torch nightly. Will make the first inference from the model take a bit longer, but subsequent inferences will be faster."}
-  )
-  system_prompt: str = field(
-    default="Write a response that answers the request according to the conversation history below.",
-    metadata={"help": "The context which precedes the chat history. Can be used to influence the chatbot's responses."}
   )
   overrun_countermeasures: bool = field(
     default=True,
@@ -135,6 +135,7 @@ def get_model(args: ModelArguments) -> LlamaForCausalLM:
   config = AutoConfig.from_pretrained(
     args.model_name_or_path,
     trust_remote_code=args.trust_remote_code,
+    cache_dir=args.cache_dir,
   )
 
   if args.use_flash_llama and config.model_type == 'llama':
@@ -181,6 +182,7 @@ def get_model(args: ModelArguments) -> LlamaForCausalLM:
     quantization_config=quantization_config,
     torch_dtype=compute_dtype,
     trust_remote_code=args.trust_remote_code,
+    cache_dir=args.cache_dir,
   ).eval()
   model.config.torch_dtype=compute_dtype
 
@@ -199,7 +201,13 @@ def main():
   if misc_args.compile:
     torch.compile(model, mode='max-autotune')
 
-  tokenizer: LlamaTokenizerFast = AutoTokenizer.from_pretrained(model_args.model_name_or_path)
+  tokenizer: LlamaTokenizerFast = AutoTokenizer.from_pretrained(
+    model_args.model_name_or_path,
+    # fast tokenizer required for WizardLM/WizardCoder-Python-34B-V1.0, because slow tokenizer doesn't come with added_tokens (required for {'[PAD]': 32000})
+    use_fast=True,
+    cache_dir=model_args.cache_dir,
+  )
+  generation_config.pad_token_id = tokenizer.pad_token_id
 
   stop_token_ids: List[int] = [tokenizer.eos_token_id]
   stop = StopOnTokens(stop_token_ids)
