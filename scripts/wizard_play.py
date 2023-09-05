@@ -20,6 +20,7 @@ import logging
 from enum import Enum
 import sys
 from time import perf_counter
+from itertools import pairwise
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +120,9 @@ class MiscArguments:
     default=False,
     metadata={"help": "Invoke torch.compile() on the model, with mode='max-autotune'. Requires PyTorch 2, CUDA, and either Python 3.10 or Python 3.11 with a recent torch nightly. Will make the first inference from the model take a bit longer, but subsequent inferences will be faster."}
   )
-  system_prompt: str = field(
-    default="Below is an instruction that describes a task. Write a response that appropriately completes the request.",
-    metadata={"help": "The context which precedes the chat history. Can be used to influence the chatbot's responses."}
+  system_prompt: Optional[str] = field(
+    default=None,
+    metadata={"help": "The context which precedes the chat history. Can be used to influence the chatbot's responses. If unspecified: defaults to the standard system prompt for the prompt style."}
   )
   initial_input: Optional[str] = field(
     default=None,
@@ -267,7 +268,23 @@ def main():
   stop = StopOnTokens(stop_token_ids)
   stopping_criteria=StoppingCriteriaList([stop])
 
-  history: List[Message] = [Message(Participant.System, misc_args.system_prompt)] if misc_args.system_prompt else []
+  system_prompt: Optional[str] = misc_args.system_prompt
+  if misc_args.system_prompt is None:
+    match misc_args.prompt_style:
+      case PromptStyle.WizardCoderPython.value:
+        system_prompt: str = 'Below is an instruction that describes a task. Write a response that appropriately completes the request.'
+      case PromptStyle.CodeLlamaInstruct.value:
+        system_prompt: str = 'Provide answers in Python'
+      case PromptStyle.Bare.value:
+        pass
+      case _:
+        raise ValueError(f'Never heard of a {misc_args.prompt_style} PromptStyle.')
+
+  # The CodeLlama blog post suggests it's fine to not specify a system prompt:
+  # https://huggingface.co/blog/codellama
+  # whereas WizardCoder seems to always use the same (Alpaca-style) system prompt (I wouldn't recommend erasing WizardCoder's system prompt)
+  optional_system_message: List[Message] = [Message(Participant.System, system_prompt)] if system_prompt else []
+  history: List[Message] = []
 
   reset_ansi='\x1b[0m'
   cyan_ansi='\x1b[31;36m'
@@ -285,6 +302,10 @@ def main():
     if participant is Participant.System:
       return message
     return f'### {participant_names[participant]}:\n{message}'
+  
+  def codellama_turn(user_msg: Message, assistant_msg: Message, is_first: bool) -> str:
+    preamble = f'<<SYS>>\n{system_prompt}\n<</SYS>>\n\n' if is_first and system_prompt else ''
+    return f'<s>[INST] {preamble}{user_msg.message} [/INST] {assistant_msg.message}'
 
   next_seed: Optional[int] = None
 
@@ -309,21 +330,24 @@ def main():
 
     first = False
 
-    user_message: Message = Message(Participant.User, user_input)
+    user_message = Message(Participant.User, user_input)
 
     match misc_args.prompt_style:
       case PromptStyle.WizardCoderPython.value:
-        # TODO
         chat_to_complete: str = '\n\n'.join([
           alpaca_section(message) for message in [
+            *optional_system_message,
             *history,
             user_message,
             Message(Participant.Assistant, ''),
           ]
         ])
       case PromptStyle.CodeLlamaInstruct.value:
-        # TODO
-        chat_to_complete: str = user_input
+        chat_to_complete: str = ' </s>'.join([codellama_turn(user_msg, assist_msg, ix == 0) for ix, (user_msg, assist_msg) in enumerate(pairwise([
+          *history,
+          user_message,
+          Message(Participant.Assistant, ''),
+        ]))])
       case PromptStyle.Bare.value:
         chat_to_complete: str = user_input
       case _:
