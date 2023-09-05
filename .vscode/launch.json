@@ -16,6 +16,18 @@
       ]
     },
     {
+      "name": "Python: WizardCoder-34B",
+      "type": "python",
+      "request": "launch",
+      "module": "scripts.wizard_play",
+      "justMyCode": false,
+      "args": [
+        "--model_name_or_path", "WizardLM/WizardCoder-Python-34B-V1.0",
+        "--flash",
+        "--prompt_style", "wizardcoder-python",
+      ]
+    },
+    {
       "name": "Python: CodeLlama-7B",
       "type": "python",
       "request": "launch",
@@ -53,7 +65,7 @@
         "--prompt_style", "codellama-instruct",
         "--chat_memory",
         "--shot0_input", "Read user's name from stdin",
-        "--shot0_response", "import sys\n\nname = input(\"Enter your name: \")\nprint(\"Your name is:\", name)",
+        "--shot0_response", "import sys; name = input(\"Enter your name: \"); print(\"Your name is:\", name)",
       ]
     },
   ]

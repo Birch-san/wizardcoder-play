@@ -150,7 +150,7 @@ Fun command-line options:
 - `--chat_memory`: enable conversation history, for multi-turn conversations (CodeLlama-Instruct was trained on this, but WizardCoder was not)
 - `--initial_input 'Write a function which computes the Fibonacci sequence.'`: you can buffer a prompt to be submitted as soon as the model's loaded.
 
-You can press Ctrl+C whilst the model is generating a response, to interrupt it.  
+You can press Ctrl+C whilst the model is generating a response, to interrupt it. If `--chat_memory` is enabled: the unfinished message **does** get persisted into the conversation history.  
 If the model is **not** generating a response, then Ctrl+C will exit the software.
 
 ### Few-shotting
@@ -179,6 +179,8 @@ name = input("Enter your name: ")
 age = input("Enter your age: ")
 print("Your name is:", name, ",", "and", "your age:", age)
 ```
+
+Note: this won't necessarily work so well for WizardCoder, which isn't trained in multi-turn conversations.
 
 ### Troubleshooting
 
