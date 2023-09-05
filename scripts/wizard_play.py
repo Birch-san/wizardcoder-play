@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional, TypedDict, NamedTuple, List, Dict, Union
+from typing import Optional, TypedDict, NamedTuple, List, Dict, Union, TypeAlias, Literal
 import torch
 from torch import LongTensor
 from transformers import (
@@ -19,12 +19,37 @@ from src.callback_text_iterator_streamer import CallbackTextIteratorStreamer
 import logging
 from enum import Enum
 import sys
+from time import perf_counter
 
 logger = logging.getLogger(__name__)
 
 class TokenizerOutput(TypedDict):
   input_ids: LongTensor
   attention_mask: LongTensor
+
+class PromptStyle(Enum):
+  Bare = 'bare'
+  WizardCoderPython = 'wizardcoder-python'
+  CodeLlamaInstruct = 'codellama-instruct'
+# I am not proud of this, but when I attempted to specify Enum fields on the arg dataclasses:
+# hfparser.parse_args_into_dataclasses() turned the enum instances into string values.
+# so we make some types to capture what we're actually going to receive.
+PromptStyleLiteral: TypeAlias = Literal['bare', 'wizardcoder-python', 'codellama-instruct']
+
+class Dtype(Enum):
+  Bf16 = 'bf16'
+  Fp16 = 'fp16'
+  Fp32 = 'fp32'
+DtypeLiteral: TypeAlias = Literal['bf16', 'fp16', 'fp32']
+
+def reify_dtype(dtype: DtypeLiteral) -> torch.dtype:
+  match(dtype):
+    case 'bf16':
+      return torch.bfloat16
+    case 'fp16':
+      return torch.float16
+    case 'fp32':
+      return torch.float32
 
 class Participant(Enum):
   User = 'user'
@@ -69,7 +94,15 @@ class ModelArguments:
   )
   bits: int = field(
     default=4,
-    metadata={"help": "How many bits to use."}
+    metadata={"help": "How many bits to use.", "choices": [4, 8, 16, 32]}
+  )
+  model_dtype: DtypeLiteral = field(
+    default=Dtype.Fp16.value,
+    metadata={"help": "Compute type of the model. Used for non-quantized computations.", "choices": [p.value for p in Dtype]}
+  )
+  bnb_compute_dtype: DtypeLiteral = field(
+    default=Dtype.Fp16.value,
+    metadata={"help": "Compute type used for quantized computations. Prefer to turn this on if you are quantizing and your GPU supports it. You probably also want it even if you're not quantizing. Float16 should be better than bfloat16. Float32 can be slightly better than float16.", "choices": [p.value for p in Dtype]}
   )
   bf16: Optional[bool] = field(
     default=False,
@@ -90,13 +123,34 @@ class MiscArguments:
     default=False,
     metadata={"help": "Invoke torch.compile() on the model, with mode='max-autotune'. Requires PyTorch 2, CUDA, and either Python 3.10 or Python 3.11 with a recent torch nightly. Will make the first inference from the model take a bit longer, but subsequent inferences will be faster."}
   )
-  overrun_countermeasures: bool = field(
-    default=True,
-    metadata={"help": "Detect when bot is about to start talking to itself; end the generation before that happens. The bot is *supposed* to emit an end-of-sentence token to indicate that it's finished its reply, but neglects to do so in longer conversations, continuing to sequence-complete both sides of the conversation. Hence this countermeasure tries to detect and prevent that."}
+  system_prompt: str = field(
+    default="Below is an instruction that describes a task. Write a response that appropriately completes the request.",
+    metadata={"help": "The context which precedes the chat history. Can be used to influence the chatbot's responses."}
+  )
+  initial_input: Optional[str] = field(
+    default=None,
+    metadata={"help": "Initial message sent to the model. For example: What is $\sqrt{53}$ in simplest radical form?"}
+  )
+  # if you actually set the type hint to PromptStyle: you will find that HF/argparse assign a string anyway
+  prompt_style: PromptStyleLiteral = field(
+    default=PromptStyle.WizardCoderPython.value,
+    metadata={"choices": [p.value for p in PromptStyle]}
   )
   chat_memory: bool = field(
     default=False,
     metadata={"help": "Whether chat sequence should accumulate a conversation context, or reset each time"}
+  )
+  reseed_each_prompt: bool = field(
+    default=True,
+    metadata={"help": "Reset seed before each user input"}
+  )
+  show_seed: bool = field(
+    default=True,
+    metadata={"help": "Show seed in prompt"}
+  )
+  measure_perf: bool = field(
+    default=True,
+    metadata={"help": "Print inference speed"}
   )
 
 @dataclass
@@ -105,7 +159,7 @@ class GenerationArguments:
   # https://huggingface.co/docs/transformers/main_classes/text_generation#transformers.GenerationConfig
   # Length arguments
   max_new_tokens: Optional[int] = field(
-    default=256,
+    default=2048,
     metadata={"help": "Maximum number of new tokens to be generated in evaluation or prediction loops"
                       "if predict_with_generate is set."}
   )
@@ -138,7 +192,7 @@ def get_model(args: ModelArguments) -> LlamaForCausalLM:
     cache_dir=args.cache_dir,
   )
 
-  if args.use_flash_llama and config.model_type == 'llama':
+  if args.flash and config.model_type == 'llama':
     updates: Dict[str, Union[str, int, float, bool, None]] = {}
     flash_model_name = 'Birchlabs/flash_llama--modeling_flash_llama.LlamaForCausalLM'
     if 'num_key_value_heads' not in config.__dict__:
@@ -156,16 +210,18 @@ def get_model(args: ModelArguments) -> LlamaForCausalLM:
       config.update(updates)
 
   cuda_avail = torch.cuda.is_available()
-  compute_dtype = torch.bfloat16 if args.bf16 else torch.float16
+  model_dtype = torch.bfloat16 if args.bf16 else torch.float16
   load_in_4bit = args.bits == 4 and cuda_avail
   load_in_8bit = args.bits == 8 and cuda_avail
+
+  bnb_compute_dtype: torch.dtype = reify_dtype(args.bnb_compute_dtype)
 
   quantization_config = BitsAndBytesConfig(
     load_in_4bit=load_in_4bit,
     load_in_8bit=load_in_8bit,
     llm_int8_threshold=6.0,
     llm_int8_has_fp16_weight=False,
-    bnb_4bit_compute_dtype=compute_dtype,
+    bnb_4bit_compute_dtype=bnb_compute_dtype,
     bnb_4bit_use_double_quant=args.double_quant,
     bnb_4bit_quant_type=args.quant_type,
   ) if cuda_avail else None
@@ -180,11 +236,11 @@ def get_model(args: ModelArguments) -> LlamaForCausalLM:
     load_in_8bit=load_in_8bit,
     device_map='auto',
     quantization_config=quantization_config,
-    torch_dtype=compute_dtype,
+    torch_dtype=model_dtype,
     trust_remote_code=args.trust_remote_code,
     cache_dir=args.cache_dir,
   ).eval()
-  model.config.torch_dtype=compute_dtype
+  model.config.torch_dtype=model_dtype
 
   return model
 
@@ -216,83 +272,79 @@ def main():
   history: List[Message] = [Message(Participant.System, misc_args.system_prompt)] if misc_args.system_prompt else []
 
   reset_ansi='\x1b[0m'
+  cyan_ansi='\x1b[31;36m'
   blue_ansi='\x1b[31;34m'
   green_ansi='\x1b[31;32m'
   purple_ansi='\x1b[31;35m'
-  prompt=f'{purple_ansi}$ '
 
   participant_names: Dict[Participant, str] = {
     Participant.User: 'Instruction',
     Participant.Assistant: 'Response',
   }
 
-  def format_message(envelope: Message) -> str:
+  def alpaca_section(envelope: Message) -> str:
     participant, message = envelope
     if participant is Participant.System:
       return message
     return f'### {participant_names[participant]}:\n{message}'
 
+  next_seed: Optional[int] = None
+
   first = True
   while True:
+    seed: int = misc_args.seed if next_seed is None else next_seed
+    if misc_args.reseed_each_prompt or first or next_seed is not None:
+      set_seed(seed)
+
     try:
-      user_input = input(f'{blue_ansi}Type a message to begin the conversation…{reset_ansi}\n{prompt}' if first else prompt)
-    except KeyboardInterrupt:
+      prompt_ctx: str = f'[seed={seed}]' if misc_args.show_seed else ''
+      if first and misc_args.initial_input is not None:
+        user_input = misc_args.initial_input
+        quote: str = f'{purple_ansi}{prompt_ctx}> '
+        print(f'{quote}{user_input}')
+      else:
+        prompt: str = f'{purple_ansi}{prompt_ctx}$ '
+        user_input = input(f'{blue_ansi}Type a message to begin the conversation…{reset_ansi}\n{prompt}' if first else prompt)
+    except (KeyboardInterrupt, EOFError):
       sys.exit(0)
     print(reset_ansi, end='')
 
     first = False
+
     user_message: Message = Message(Participant.User, user_input)
-  
-    chat_to_complete: str = '\n\n'.join([
-      format_message(message) for message in [
-        *history,
-        user_message,
-        Message(Participant.Assistant, ''),
-      ]
-    ])
+
+    match misc_args.prompt_style:
+      case PromptStyle.WizardCoderPython.value:
+        # TODO
+        chat_to_complete: str = '\n\n'.join([
+          alpaca_section(message) for message in [
+            *history,
+            user_message,
+            Message(Participant.Assistant, ''),
+          ]
+        ])
+      case PromptStyle.CodeLlamaInstruct.value:
+        # TODO
+        chat_to_complete: str = user_input
+      case PromptStyle.Bare.value:
+        chat_to_complete: str = user_input
+      case _:
+        raise ValueError(f'Never heard of a {misc_args.prompt_style} PromptStyle.')
 
     tokenized_prompts: TokenizerOutput = tokenizer([chat_to_complete], return_tensors='pt', truncation=True)
     
     print(green_ansi, end='', flush=True)
 
     response = ''
-    if misc_args.overrun_countermeasures:
-      # the model may continue adding to the conversation (replying to itself) instead of emitting an EOS token.
-      # we try to intercept this. If it looks like it's starting a new message in the voice of either of the chat participants: don't print that, and stop generation.
-      acc_overrun = ''
-
-      def on_text(message: str, stream_end = False):
-        nonlocal response, acc_overrun
-
-        overrun_and_message = f'{acc_overrun}{message}'
-
-        newline_ix = overrun_and_message.find('\n')
-        if newline_ix > -1:
-          pre_newline = overrun_and_message[:newline_ix]
-          newline_onward = overrun_and_message[newline_ix:]
-
-          if newline_onward.startswith('\n\n###'):
-            raise SufficientResponse()
-          if newline_onward.rstrip('\n\n###') == '':
-            # could potentially grow into a \n\n###. Don't print it to the console just yet. we need to accumulate to see whether the bot's about to talk to itself.
-            acc_overrun = newline_onward
-            response += pre_newline
-            print(pre_newline, end='', flush=True)
-            return
-          # newline_onward cannot grow into an Instruction/Response header, so this must be something else. flush everything we accumulated.
-
-        response += overrun_and_message
-        print(overrun_and_message, end='', flush=True)
-        acc_overrun = ''
-    else:
-      def on_text(message: str, stream_end = False):
-        nonlocal response
-        response += message
-        print(message, end='', flush=True)
+    def on_text(message: str, stream_end = False):
+      nonlocal response
+      response += message
+      print(message, end='', flush=True)
 
     streamer = CallbackTextIteratorStreamer(tokenizer, callback=on_text, skip_prompt=True, skip_special_tokens=True)
 
     try:
+      inference_start: float = perf_counter()
       prediction: LongTensor = model.generate(
         input_ids=tokenized_prompts.input_ids.to(model.device),
         attention_mask=tokenized_prompts.attention_mask.to(model.device),
@@ -301,14 +353,22 @@ def main():
         stopping_criteria=stopping_criteria,
         streamer=streamer,
       )
+      # reset ANSI control sequence (plus line break)
+      print(reset_ansi)
       # if you wanted to see the result, you can do so like this:
-      #   decode: List[str] = tokenizer.decode(prediction[0,tokenized_prompts.input_ids.size(-1):], skip_special_tokens=True, clean_up_tokenization_spaces=True)
+      # decode: List[str] = tokenizer.decode(prediction[0,tokenized_prompts.input_ids.size(-1):], skip_special_tokens=False, clean_up_tokenization_spaces=True)
+      # print(decode)
+      # pass
       # but we're already streaming it to the console via our callback
-    except (KeyboardInterrupt, SufficientResponse):
-      pass
-
-    # reset ANSI control sequence (plus line break)
-    print(reset_ansi)
+      inference_duration: float = perf_counter()-inference_start
+      token_in_count: int = tokenized_prompts.input_ids.size(-1)
+      token_out_count: int = prediction.size(-1) - token_in_count
+      tokens_out_per_sec: float = token_out_count/inference_duration
+      if misc_args.measure_perf:
+        print(f'{cyan_ansi}ctx length: {token_in_count}\ntokens out: {token_out_count}\nduration: {inference_duration:.2f} secs\nspeed: {tokens_out_per_sec:.2f} tokens/sec{reset_ansi}')
+    except (KeyboardInterrupt, SufficientResponse, EOFError):
+      # reset ANSI control sequence (plus line break)
+      print(reset_ansi)
 
     # we disable accumulation of conversation history by default, because WizardCoder is not advertised as being finetuned on multi-turn conversations,
     # but more importantly because I'd rather spend our 4k context length on a detailed answer for a single-turn than an incomplete answer for multiple turns.

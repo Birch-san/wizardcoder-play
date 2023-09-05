@@ -130,12 +130,13 @@ Solution [here](https://github.com/Dao-AILab/flash-attention/issues/484#issuecom
 From root of repository:
 
 ```bash
-python -m scripts.wizard_play
+python -m scripts.wizard_play --prompt_style wizardcoder-python
 ```
 
 Fun command-line options:
 
 - `--flash --trust_remote_code`: enables flash attention 2 via `flash-attn` library and ([my fork of](https://huggingface.co/Birchlabs/flash_llama)) [togethercomputer's `modeling_flash_llama.py`](https://huggingface.co/togethercomputer/LLaMA-2-7B-32K/blob/main/modeling_flash_llama.py)
+- `--max_new_tokens`: maximum response length
 
 ### Troubleshooting
 
@@ -158,4 +159,8 @@ Recent flash-attn releases encounter [errors _importing_ rotary embed](https://g
 
 This repository is itself MIT-licensed.
 
-Includes MIT-licensed code copied from Artidoro Pagnoni's [qlora](https://github.com/artidoro/qlora), and [Apache-licensed](licenses/MosaicML-mpt-7b-chat-hf-space.Apache.LICENSE.txt) code copied from MosaicML's [mpt-7b-chat](https://huggingface.co/spaces/mosaicml/mpt-7b-chat/blob/main/app.py) Huggingface Space.
+Includes:
+
+- MIT-licensed code copied from Artidoro Pagnoni's [qlora](https://github.com/artidoro/qlora)
+- MIT-licensed code copied from Scott Logic's [qlora fork](https://github.com/scottlogic-alex/qlora) (specifically [`evaluate.py`](https://github.com/scottlogic-alex/qlora/blob/stepwise/evaluate.py)).
+- [Apache-licensed](licenses/MosaicML-mpt-7b-chat-hf-space.Apache.LICENSE.txt) code copied from MosaicML's [mpt-7b-chat](https://huggingface.co/spaces/mosaicml/mpt-7b-chat/blob/main/app.py) Huggingface Space

@@ -11,7 +11,8 @@
       "module": "scripts.wizard_play",
       "justMyCode": false,
       "args": [
-        "--flash"
+        "--flash",
+        "--prompt_style", "wizardcoder-python",
       ],
       "env": {
       }
