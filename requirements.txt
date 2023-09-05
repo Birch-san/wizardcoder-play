@@ -1,6 +1,5 @@
 torch
 transformers
 accelerate
-peft
 bitsandbytes
 scipy
