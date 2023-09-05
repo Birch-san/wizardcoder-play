@@ -1,12 +1,20 @@
 # WizardCoder-Play
 
-Python script to demonstrate how to invoke models such as WizardCoder from the command-line.
+Python script to demonstrate how to invoke models such as WizardCoder from the command-line, with bitsandbytes 4-bit quantization.
 
 Intends to support the following models:
 
 - [`WizardLM/WizardCoder-Python-7B-V1.0`](https://huggingface.co/WizardLM/WizardCoder-Python-7B-V1.0)
 - [`WizardLM/WizardCoder-Python-13B-V1.0`](https://huggingface.co/WizardLM/WizardCoder-Python-13B-V1.0)
 - [`WizardLM/WizardCoder-Python-34B-V1.0`](https://huggingface.co/WizardLM/WizardCoder-Python-34B-V1.0)
+- [`codellama/CodeLlama-7b-Instruct-hf`](https://huggingface.co/codellama/CodeLlama-7b-Instruct-hf)
+- [`codellama/CodeLlama-13b-Instruct-hf`](https://huggingface.co/codellama/CodeLlama-13b-Instruct-hf)
+- [`codellama/CodeLlama-34b-Instruct-hf`](https://huggingface.co/codellama/CodeLlama-34b-Instruct-hf)
+
+CodeLlama models were [trained on 16000 token sequences](https://ai.meta.com/blog/code-llama-large-language-model-coding/).  
+WizardCoder was [finetuned on 2048 token sequences](https://arxiv.org/abs/2306.08568).
+
+WizardCoder-Python-34B-V1.0 [surpasses](https://huggingface.co/WizardLM/WizardCoder-Python-34B-V1.0) GPT4, ChatGPT-3.5 and Claude2 on HumanEval benchmarks.
 
 ## Setup
 
@@ -130,13 +138,16 @@ Solution [here](https://github.com/Dao-AILab/flash-attention/issues/484#issuecom
 From root of repository:
 
 ```bash
-python -m scripts.wizard_play --prompt_style wizardcoder-python
+python -m scripts.wizard_play
 ```
 
 Fun command-line options:
 
+- `--model_name_or_path WizardLM/WizardCoder-Python-7B-V1.0 --prompt_style wizardcoder-python`: use WizardCoder 7B with WizardCoder prompting style
+- `--model_name_or_path codellama/CodeLlama-7b-Instruct-hf --prompt_style codellama-instruct`: use CodeLlama-7b-Instruct with CodeLlama-Instruct prompting style
 - `--flash --trust_remote_code`: enables flash attention 2 via `flash-attn` library and ([my fork of](https://huggingface.co/Birchlabs/flash_llama)) [togethercomputer's `modeling_flash_llama.py`](https://huggingface.co/togethercomputer/LLaMA-2-7B-32K/blob/main/modeling_flash_llama.py)
-- `--max_new_tokens`: maximum response length
+- `--max_new_tokens 2048`: modify maximum response length
+- `--chat_memory`: enable conversation history, for multi-turn conversations (CodeLlama-Instruct was trained on this, but WizardCoder was not)
 
 ### Troubleshooting
 

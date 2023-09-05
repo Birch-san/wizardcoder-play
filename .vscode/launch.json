@@ -25,6 +25,20 @@
         "--model_name_or_path", "codellama/CodeLlama-7b-Instruct-hf",
         "--flash",
         "--prompt_style", "codellama-instruct",
+        "--chat_memory",
+      ]
+    },
+    {
+      "name": "Python: CodeLlama-34B",
+      "type": "python",
+      "request": "launch",
+      "module": "scripts.wizard_play",
+      "justMyCode": false,
+      "args": [
+        "--model_name_or_path", "codellama/CodeLlama-34b-Instruct-hf",
+        "--flash",
+        "--prompt_style", "codellama-instruct",
+        "--chat_memory",
       ]
     }
   ]

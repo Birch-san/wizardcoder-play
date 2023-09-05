@@ -200,7 +200,15 @@ def get_model(args: ModelArguments) -> LlamaForCausalLM:
     else:
       updates['auto_map'] = { 'AutoModelForCausalLM': flash_model_name }
     if 'rope_scaling' not in config.__dict__:
-      updates['rope_scaling'] = { 'factor': (args.source_max_len + args.target_max_len)/config.max_position_embeddings, 'type': 'linear' }
+      # CodeLlama-Instruct was trained on 16000 token sequences:
+      # https://ai.meta.com/blog/code-llama-large-language-model-coding/
+      # WizardCoder was trained on 2048 token sequences (see section 4.2):
+      # https://arxiv.org/abs/2306.08568
+      # but both of their HF models report 16384 as the max position embeddings.
+      # whatever; let's leave the rope scaling as default.
+      # if you want to do different scaling, I think you'd compute it like this:
+      #   factor = desired_context_length/config.max_position_embeddings
+      updates['rope_scaling'] = { 'factor': 1., 'type': 'linear' }
     if 'pretraining_tp' not in config.__dict__:
       updates['pretraining_tp'] = 1
     if updates:
