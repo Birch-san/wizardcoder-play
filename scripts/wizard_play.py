@@ -98,15 +98,11 @@ class ModelArguments:
   )
   model_dtype: DtypeLiteral = field(
     default=Dtype.Fp16.value,
-    metadata={"help": "Compute type of the model. Used for non-quantized computations.", "choices": [p.value for p in Dtype]}
+    metadata={"help": "Compute type of the model. Used for non-quantized computations. Float16 may be more better than bfloat16 for inference.", "choices": [p.value for p in Dtype]}
   )
   bnb_compute_dtype: DtypeLiteral = field(
     default=Dtype.Fp16.value,
-    metadata={"help": "Compute type used for quantized computations. Prefer to turn this on if you are quantizing and your GPU supports it. You probably also want it even if you're not quantizing. Float16 should be better than bfloat16. Float32 can be slightly better than float16.", "choices": [p.value for p in Dtype]}
-  )
-  bf16: Optional[bool] = field(
-    default=False,
-    metadata={"help": "Compute type of the model. If quantizing: this is also the compute type used for quantized computations. But since this is inference rather than training: the extra mantissa precision of float16 may be more useful than the exponent range of bfloat16."}
+    metadata={"help": "Compute type used for computations over dequantized weights. Float16 should be better than bfloat16. Float32 can be slightly better than float16.", "choices": [p.value for p in Dtype]}
   )
   flash: Optional[bool] = field(
     default=False,
@@ -210,13 +206,12 @@ def get_model(args: ModelArguments) -> LlamaForCausalLM:
       config.update(updates)
 
   cuda_avail = torch.cuda.is_available()
-  model_dtype = torch.bfloat16 if args.bf16 else torch.float16
   load_in_4bit = args.bits == 4 and cuda_avail
   load_in_8bit = args.bits == 8 and cuda_avail
 
   bnb_compute_dtype: torch.dtype = reify_dtype(args.bnb_compute_dtype)
 
-  quantization_config = BitsAndBytesConfig(
+  quantization_config: Optional[BitsAndBytesConfig] = BitsAndBytesConfig(
     load_in_4bit=load_in_4bit,
     load_in_8bit=load_in_8bit,
     llm_int8_threshold=6.0,
@@ -228,6 +223,8 @@ def get_model(args: ModelArguments) -> LlamaForCausalLM:
 
   if not cuda_avail:
     logger.warning("You don't have CUDA, so we have turned off quantization. If you happen to be on a Mac: maybe you have enough unified memory to run in fp16 anyway…")
+  
+  model_dtype: torch.dtype = reify_dtype(args.model_dtype)
   
   model: LlamaForCausalLM = AutoModelForCausalLM.from_pretrained(
     args.model_name_or_path,
@@ -263,7 +260,8 @@ def main():
     use_fast=True,
     cache_dir=model_args.cache_dir,
   )
-  generation_config.pad_token_id = tokenizer.pad_token_id
+  # WizardCoder defines {'[PAD]': 32000}, but CodeLLama doesn't define any pad token, so we fall back to EOS.
+  generation_config.pad_token_id = tokenizer.eos_token_id if tokenizer.pad_token_id is None else tokenizer.pad_token_id
 
   stop_token_ids: List[int] = [tokenizer.eos_token_id]
   stop = StopOnTokens(stop_token_ids)

@@ -5,7 +5,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Python: WizardCoder play",
+      "name": "Python: WizardCoder-7B",
       "type": "python",
       "request": "launch",
       "module": "scripts.wizard_play",
@@ -13,9 +13,19 @@
       "args": [
         "--flash",
         "--prompt_style", "wizardcoder-python",
-      ],
-      "env": {
-      }
+      ]
+    },
+    {
+      "name": "Python: CodeLlama-7B",
+      "type": "python",
+      "request": "launch",
+      "module": "scripts.wizard_play",
+      "justMyCode": false,
+      "args": [
+        "--model_name_or_path", "codellama/CodeLlama-7b-Instruct-hf",
+        "--flash",
+        "--prompt_style", "codellama-instruct",
+      ]
     }
   ]
 }
