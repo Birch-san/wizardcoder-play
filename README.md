@@ -1,5 +1,7 @@
 # WizardCoder-Play
 
+<img height="250" alt="image" src="https://github.com/Birch-san/wizardcoder-play/assets/6141784/e0292ebf-8998-460b-a021-a4c1b5511d20">
+
 Python script to demonstrate how to invoke models such as WizardCoder from the command-line, with bitsandbytes 4-bit quantization.
 
 Intends to support the following models:
